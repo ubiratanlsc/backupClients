@@ -1,0 +1,160 @@
+#!/bin/bash -xvf
+dataHoje=$(date +'%d-%m-%Y') 
+dataMes=$(date +%m-%Y)
+horarioFim=08
+
+n1(){
+    declare -i contador1=$(cat /home/extend/scripts/contador | cut -d: -f1 | sed "s/ //g")
+    echo $[contador1]
+}
+
+n2(){
+    declare -i contador2=$(cat /home/extend/scripts/contador | cut -d: -f2 | sed "s/ //g")
+    echo $[contador2]
+}
+cont1=`n1`
+cont2=`n2`
+checaDois(){
+    chek2=$(cat /home/extend/scripts/contador | cut -d: -f5 | sed "s/ //g")
+}
+checaUm(){
+    check1=$(cat /home/extend/scripts/contador | cut -d: -f4 | sed "s/ //g")
+}
+
+horaAgora(){
+    horarioLocal=$(date +%H)
+}
+
+validaClientes(){
+    quantClientes=$(find /home/extend/scripts/clientes -maxdepth 1 -type f | wc -l) #verifica a quantidade de clientes
+    cliente=$(ls -m /home/extend/scripts/clientes | cut -d, -f$quantClientes | sed "s/ //g") #guarda qual cliente é com basse no numero de clientes retornados acima
+    cd '/home/extend/scripts/clientes/'
+    lastIpCliente=$(grep -c ".*" ./$cliente) #verifica quantas linhas tem no arquivo do cliente pego pela variavel acima
+    cd '/home/extend/scripts/'
+    validaUltimoBackup
+}
+validaUltimoBackup(){
+    cont1=`n1`
+    cont2=`n2`
+    ultimoCliente=$(cat /home/extend/scripts/contador | cut -d: -f1 | sed "s/ //g")
+    ultimoIP=$(cat /home/extend/scripts/contador | cut -d: -f2 | sed "s/ //g")
+    ultimaData=$(cat /home/extend/scripts/contador | cut -d: -f3 | sed "s/ //g")
+    
+
+    if [ $ultimoCliente == $quantClientes ] && [ $ultimoIP == $lastIpCliente ] && [ $ultimaData == $dataMes ]; then
+        echo "o backup desse mês foi finalizado"
+        cont1=`n1`
+        cont2=`n2`
+        echo "$cont1:$cont2:$dataMes:false:false" >/home/extend/scripts/contador
+        checaUm
+        checaDois
+        exit        
+    elif [[ $ultimoCliente -eq $quantClientes ]] && [[ $ultimoIP -eq $lastIpCliente ]] && [[ $ultimaData -ne $dataMes ]]; then
+        echo "elsif com contadores $cont1 --- $cont2"
+        echo "1:1:$dataMes:true:true" >/home/extend/scripts/contador
+        cats=$(cat /home/extend/scripts/contador)
+        echo $cats 
+        verificacao_nclientes
+    else
+        echo "else com contadores $cont1 --- $cont2"
+        echo "$cont1:$cont2:$dataMes:true:true" >/home/extend/scripts/contador
+        verificacao_nclientes
+    fi
+}
+
+verificacao_nclientes() {
+    cont1=`n1`
+    cont2=`n2`
+    checaUm
+    while [ $check1 ];
+    do
+        clientes=$(ls -m /home/extend/scripts/clientes | cut -d, -f$cont1 | sed "s/ //g")
+        echo $clientes
+        cd '/home/bkpClientes/'
+        if [ ! -d $clientes ]; then
+            echo $clientes
+            mkdir $clientes
+        fi
+        verificacao_ip
+        echo "verificando se o while continua antes do while2"
+    sleep 1
+    done
+
+}
+verificacao_ip() {
+    checaDois
+    cd '/home/extend/scripts/clientes/'
+    verifica_ip=$(grep -c ".*" ./$clientes)
+    cd '/home/extend/scripts/'
+    # for ((; a <= $verifica_ip; a++ )); do #while [ $a -le $verifica_ip ]; do
+    while [ $chek2 ];
+    do
+        horario=$(date +%H:%M:%S)
+        ip_clientes=$(cat /home/extend/scripts/clientes/$clientes | grep ip$cont2: | cut -d: -f2 | sed "s/ //g")
+        ENTER=$(echo /home/bkpClientes/$clientes | sed "s/ //g")
+        cd $ENTER
+        if [ ! -d $ip_clientes ]; then
+            mkdir $ip_clientes
+        fi
+
+       
+        verifica_conexao
+        if [ $? -eq '0' ]; then
+            # echo $?
+            backup
+        else
+            echo "não foi possivel fazer o backup"
+            echo "cliente,$clientes,ip,$ip_clientes,data,$dataHoje,hora,$horario" >>/home/extend/scripts/logs/Erros:$clientes-$dataMes.txt
+            cd "/home/extend/scripts/"
+        fi
+        
+        horaAgora
+        cont1=`n1`
+        cont2=`n2`
+        if ([ $cont2 == $verifica_ip ] && [ $cont1 == $quantClientes ]) ; then
+            validahorario
+        elif ([ $cont2 == $verifica_ip ] && [ $horarioLocal > $horarioFim ]); then
+            cont1=`n1`
+            result1=$(expr "$cont1" + "1")
+            echo $result1
+            echo "$result1:1:$dataMes:true:false" >/home/extend/scripts/contador
+            checaDois
+        elif [ $cont2 -le $verifica_ip ]; then
+            cont1=`n1`
+            cont2=`n2`
+            result2=$(expr "$cont2" + "1")
+            echo "$cont1:$result2:$dataMes:true:true" >/home/extend/scripts/contador
+            checaDois
+        fi
+        sleep 6
+        validahorario
+    done
+}
+
+verifica_conexao() {
+     echo "verificando a conexão do ip $ip_clientes"
+    ping -c 1 $ip_clientes 1>>/home/extend/scripts/logs/Erros:$clientes-$dataMes.txt # >/dev/null 2>&1
+    ping -c 4 $ip_clientes >/dev/null 2>&1
+    return $?
+}
+backup() {
+    echo "iniciando backup cliente: $clientes IP: $ip_clientes"
+    sshpass -p "pwserver" rsync -avzPh --progress --backup --backup-dir=/tmp root@$ip_clientes:/opt/scripts/ /home/bkpClientes/$clientes/$ip_clientes 2>>/home/extend/scripts/logs/Erros:$clientes-$dataMes.txt
+    if [ $? -eq '0' ]; then
+        echo "cliente,$clientes,ip,$ip_clientes,data,$dataHoje,hora,$horario" >>/home/extend/scripts/logs/$clientes-$dataMes.txt
+    fi
+}
+validahorario() {
+    horaAgora
+    cont1=`n1`
+    cont2=`n2`
+    echo "echo do valida horario com os valores $cont1 --- $cont2"
+    if [ $horarioLocal -le $horarioFim ];  then
+        echo "executando o backup"
+        validaClientes
+    else
+        echo "O backup não será executado horario excedeu o limite" >> /home/extend/scripts/logs/log
+        echo "$cont1:$cont2:$dataMes:false:false" >/home/extend/scripts/contador
+    fi
+}
+validahorario
